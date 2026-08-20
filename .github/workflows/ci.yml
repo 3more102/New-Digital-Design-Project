@@ -1,0 +1,191 @@
+# =============================================================================
+# GitHub Actions CI - Timer/Counter Subsystem
+# =============================================================================
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+env:
+  NUM_CHANNELS: 4
+  WIDTH: 32
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Python Golden Model Tests
+  # ---------------------------------------------------------------------------
+  golden-model:
+    name: Python Golden Model
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Run golden model tests
+        run: |
+          cd python
+          python -m pytest timer_golden_model.py -v --tb=short
+          python timer_golden_model.py
+        env:
+          PYTHONPATH: .
+
+  # ---------------------------------------------------------------------------
+  # RTL Compilation and Simulation
+  # ---------------------------------------------------------------------------
+  simulation:
+    name: RTL Simulation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Icarus Verilog
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y iverilog
+
+      - name: Compile RTL
+        run: |
+          mkdir -p sim/results sim/logs
+          iverilog -g2012 \
+            -DNUM_CHANNELS=${{ env.NUM_CHANNELS }} \
+            -DWIDTH=${{ env.WIDTH }} \
+            -I rtl \
+            rtl/prescaler.sv \
+            rtl/counter.sv \
+            rtl/compare_unit.sv \
+            rtl/pwm_generator.sv \
+            rtl/input_capture.sv \
+            rtl/cascade_unit.sv \
+            rtl/register_block.sv \
+            rtl/interrupt_controller.sv \
+            rtl/timer_top.sv \
+            tb/timer_tb.sv \
+            tb/agents/apb_bfm.sv \
+            -o sim/results/timer_tb.vvp
+
+      - name: Run simulation
+        run: |
+          vvp sim/results/timer_tb.vvp 2>&1 | tee sim/logs/sim.log
+          echo "=== Checking for failures ==="
+          if grep -q "FAIL" sim/logs/sim.log; then
+            echo "Tests failed!"
+            exit 1
+          fi
+
+      - name: Upload simulation logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: simulation-logs
+          path: sim/logs/
+
+  # ---------------------------------------------------------------------------
+  # Assertion Verification
+  # ---------------------------------------------------------------------------
+  assertions:
+    name: SVA Assertions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Icarus Verilog
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y iverilog
+
+      - name: Compile with assertions
+        run: |
+          mkdir -p sim/results sim/logs
+          iverilog -g2012 \
+            -DNUM_CHANNELS=${{ env.NUM_CHANNELS }} \
+            -DWIDTH=${{ env.WIDTH }} \
+            -I rtl \
+            rtl/prescaler.sv \
+            rtl/counter.sv \
+            rtl/compare_unit.sv \
+            rtl/pwm_generator.sv \
+            rtl/input_capture.sv \
+            rtl/cascade_unit.sv \
+            rtl/register_block.sv \
+            rtl/interrupt_controller.sv \
+            rtl/timer_top.sv \
+            tb/timer_tb.sv \
+            tb/agents/apb_bfm.sv \
+            tb/assertions/timer_assertions.sv \
+            -o sim/results/timer_tb_assert.vvp
+
+      - name: Run with assertions
+        run: vvp sim/results/timer_tb_assert.vvp 2>&1 | tee sim/logs/sim_assert.log
+
+  # ---------------------------------------------------------------------------
+  # Yosys Synthesis (Quick Check)
+  # ---------------------------------------------------------------------------
+  synthesis:
+    name: Yosys Synthesis
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Yosys
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y yosys
+
+      - name: Run synthesis
+        run: |
+          mkdir -p synth/output sim/logs
+          cd synth
+          yosys -s synth_yosys.ys 2>&1 | tee ../sim/logs/yosys.log
+
+      - name: Check for errors
+        run: |
+          if grep -q "ERROR\|error:" sim/logs/yosys.log; then
+            echo "Synthesis errors detected!"
+            exit 1
+          fi
+
+      - name: Upload synthesis results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: synthesis-results
+          path: |
+            synth/output/
+            sim/logs/yosys.log
+
+  # ---------------------------------------------------------------------------
+  # Documentation Build Check
+  # ---------------------------------------------------------------------------
+  docs:
+    name: Documentation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify documentation exists
+        run: |
+          echo "Checking documentation files..."
+          for f in README.md LICENSE docs/DESIGN_SPEC.md docs/VERIFICATION_PLAN.md docs/ARCHITECTURE.md; do
+            if [ -f "$f" ]; then
+              echo "  ✓ $f"
+            else
+              echo "  ✗ $f (missing!)"
+              exit 1
+            fi
+          done
+
+      - name: Check README length
+        run: |
+          lines=$(wc -l < README.md)
+          if [ "$lines" -lt 50 ]; then
+            echo "README.md seems too short ($lines lines)"
+            exit 1
+          fi
+          echo "README.md: $lines lines - OK"

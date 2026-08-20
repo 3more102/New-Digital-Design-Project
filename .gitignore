@@ -1,0 +1,48 @@
+# Simulation outputs
+*.vcd
+*.fsdb
+*.wlf
+*.vpd
+sim/results/
+sim/logs/
+
+# Synthesis outputs
+synth/output/
+synth/reports/
+*.lib
+*.lef
+*.def
+*.gds
+*.mag
+*.netlist
+*_netlist.v
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+
+# Yosys
+synth/yosys/
+*.blif
+
+# OpenROAD
+synth/openroad/results/
+synth/openroad/logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# Coverage
+*.urgReport
+*.html
+cov_*_report/
