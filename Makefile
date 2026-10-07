@@ -52,9 +52,9 @@ $(SIM_DIR)/results $(SIM_DIR)/logs $(SYNTH_DIR)/output:
 # Simulation
 # =============================================================================
 
-sim: $(SIM_DIR)/results
+sim: $(SIM_DIR)/results $(SIM_DIR)/logs
 	@echo "=== Compiling RTL + Testbench ==="
-	$(IVERILOG) -g2012 \
+	$(IVERILOG) -g2012 -s timer_tb \
 		-DNUM_CHANNELS=$(NUM_CHANNELS) \
 		-DWIDTH=$(WIDTH) \
 		-I $(RTL_DIR) \
@@ -64,13 +64,14 @@ sim: $(SIM_DIR)/results
 	$(VVP) $(SIM_DIR)/results/timer_tb.vvp 2>&1 | tee $(SIM_DIR)/logs/sim.log
 	@echo "=== Simulation Complete ==="
 
-sim_assert: $(SIM_DIR)/results
+sim_assert: $(SIM_DIR)/results $(SIM_DIR)/logs
 	@echo "=== Compiling with Assertions ==="
-	$(IVERILOG) -g2012 \
+	$(IVERILOG) -g2012 -s timer_tb \
+		-DENABLE_ASSERTIONS \
 		-DNUM_CHANNELS=$(NUM_CHANNELS) \
 		-DWIDTH=$(WIDTH) \
 		-I $(RTL_DIR) \
-		$(RTL_SRCS) $(TB_SRCS) $(ASSERT_SRCS) \
+		$(RTL_SRCS) $(ASSERT_SRCS) $(TB_SRCS) \
 		-o $(SIM_DIR)/results/timer_tb_assert.vvp 2>&1 | tee $(SIM_DIR)/logs/compile_assert.log
 	@echo "=== Running with Assertions ==="
 	$(VVP) $(SIM_DIR)/results/timer_tb_assert.vvp 2>&1 | tee $(SIM_DIR)/logs/sim_assert.log
@@ -82,7 +83,8 @@ sim_assert: $(SIM_DIR)/results
 
 test_python:
 	@echo "=== Running Python Golden Model Tests ==="
-	cd $(PY_DIR) && $(PYTHON) timer_golden_model.py
+	$(PYTHON) -m pytest $(PY_DIR) -q
+	$(PYTHON) $(PY_DIR)/timer_golden_model.py
 	@echo "=== Python Tests Complete ==="
 
 # =============================================================================
@@ -91,7 +93,7 @@ test_python:
 
 synth: yosys
 
-yosys: $(SYNTH_DIR)/output
+yosys: $(SYNTH_DIR)/output $(SIM_DIR)/logs
 	@echo "=== Running Yosys Synthesis ==="
 	cd $(SYNTH_DIR) && $(YOSYS) -s synth_yosys.ys 2>&1 | tee ../$(SIM_DIR)/logs/yosys.log
 	@echo "=== Synthesis Complete ==="
@@ -142,7 +144,7 @@ help:
 	@echo "  make test        - Run Python model + RTL simulation (default)"
 	@echo "  make test_all    - Full suite: Python + sim + assertions + synthesis"
 	@echo "  make sim         - Compile and run RTL simulation"
-	@echo "  make sim_assert  - Compile and run with SVA assertions"
+	@echo "  make sim_assert  - Compile and run with assertion monitor"
 	@echo "  make test_python - Run Python golden model"
 	@echo "  make yosys       - Run Yosys synthesis"
 	@echo "  make openroad    - Run OpenROAD (requires PDK)"

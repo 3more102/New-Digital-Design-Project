@@ -1,8 +1,8 @@
 # Design Specification - Multi-Channel Timer/Counter Subsystem
 
-**Version:** 1.0.0
-**Date:** August 2026
-**Status:** RTL Complete
+**Version:** 1.0.1
+**Date:** October 2026
+**Status:** RTL verified in CI
 
 ---
 
@@ -17,7 +17,7 @@ The Timer/Counter Subsystem is a parameterized, memory-mapped peripheral IP desi
 | Parameterization | Channels (1-16), Width (8-64 bits) |
 | Clock frequency target | 100 MHz (10ns period) |
 | Interface | APB3-compatible |
-| Verification coverage | >90% functional |
+| Verification | Directed semantic regression + golden model + invariant monitor |
 | Synthesis targets | Yosys, Design Compiler, Genus |
 
 ## 3. Architecture
@@ -75,8 +75,8 @@ timer_top (top)
 
 ### 4.2 Prescaler
 
-- Configurable 16-bit divisor (1 to 65536)
-- Counter advances once per `DIVISOR` clock cycles
+- Configurable 16-bit divisor register
+- Encoded divisor `N` produces one tick every `N+1` input clocks (`0` = divide-by-1)
 - Prescaler freezes when global_enable = 0
 
 ### 4.3 Compare Match
@@ -84,7 +84,6 @@ timer_top (top)
 - 32-bit compare register per channel
 - Match event when counter == compare value
 - Match generates interrupt if enabled
-- Auto-reload can be triggered on match
 
 ### 4.4 PWM Generation
 
@@ -104,7 +103,7 @@ timer_top (top)
 
 - Overflow/underflow of channel N drives count-enable of channel N+1
 - Creates wider effective counter (e.g., 2×32-bit = 64-bit)
-- Cascaded channel must have cascade_en bit set
+- Destination channel must have `cascade_en` set; while cascaded, it advances only on the previous channel event and does not also consume local prescaler ticks
 
 ### 4.7 Interrupt Controller
 
@@ -117,8 +116,9 @@ timer_top (top)
 
 See README.md for register map. Key design decisions:
 
-- **Write-1-to-clear** for interrupt status (prevents race conditions)
-- **Counter readable/writable** for software preloading
+- **Sticky STATUS** records match/overflow/underflow/capture events
+- **Write-1-to-clear** clears pending interrupt and sticky STATUS
+- **CNT readable/writable** for software preloading; **RELOAD** is independent and is applied only on overflow/underflow
 - **Global prescaler** shared across all channels
 - **Version register** for IP identification and versioning
 
@@ -145,10 +145,10 @@ See README.md for register map. Key design decisions:
 ## 7. Verification Approach
 
 - Self-checking testbench with directed tests
-- SystemVerilog concurrent assertions for protocol checks
+- Portable assertion/invariant monitor for APB and behavioral checks
 - Python golden model for cross-validation
 - Corner case tests (max values, overflow, cascade timing)
-- Coverage-driven random testing
+- Verilator lint and Yosys synthesis in CI
 
 ## 8. Synthesis Support
 

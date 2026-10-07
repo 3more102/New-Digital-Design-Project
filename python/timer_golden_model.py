@@ -46,8 +46,11 @@ class TimerChannel:
         self.match = False
         self.capture_event = False
 
-        count_enable = prescaler_tick and self.enabled
-        cascade_trigger = cascade_in and self.cascade_en
+        # Cascade mode is exclusive: a cascaded channel advances only when the
+        # previous channel generates a cascade event. Otherwise it follows the
+        # shared prescaler tick.
+        count_enable = prescaler_tick and self.enabled and not self.cascade_en
+        cascade_trigger = cascade_in and self.enabled and self.cascade_en
 
         if count_enable or cascade_trigger:
             if self.mode == 1:  # Up count
@@ -81,7 +84,7 @@ class TimerChannel:
                         self.count = (self.count - 1) & self.mask
 
         # Compare match
-        if self.enabled and count_enable and self.count == self.compare_val:
+        if self.enabled and (count_enable or cascade_trigger) and self.count == self.compare_val:
             self.match = True
             self.int_pending = True
 
@@ -130,7 +133,8 @@ class TimerSubsystem:
     """Complete timer subsystem model."""
     num_channels: int = 4
     width: int = 32
-    prescaler_val: int = 1
+    prescaler_val: int = 0  # 0=divide-by-1, 1=divide-by-2, ...
+    prescaler_count: int = 0
     global_enable: bool = False
     channels: List[TimerChannel] = field(default_factory=list)
 
@@ -144,19 +148,25 @@ class TimerSubsystem:
         if not self.global_enable:
             return
 
-        prescaler_tick = True  # Simplified; real prescaler would count
+        # RTL semantics: divisor N produces a tick every N+1 input clocks.
+        if self.prescaler_count >= self.prescaler_val:
+            prescaler_tick = True
+            self.prescaler_count = 0
+        else:
+            prescaler_tick = False
+            self.prescaler_count += 1
 
         cascade_trigger = [False] * self.num_channels
 
         for i in range(self.num_channels):
             ch = self.channels[i]
-            cascade_in = cascade_trigger[i - 1] if i > 0 else False
+            cascade_in = cascade_trigger[i]
             ch.tick(prescaler_tick, cascade_in)
 
-            # Propagate cascade
-            if ch.cascade_en and (ch.overflow or ch.underflow):
-                if i + 1 < self.num_channels:
-                    cascade_trigger[i + 1] = True
+            # Source overflow/underflow always propagates. The destination
+            # decides whether to consume it through its cascade_en setting.
+            if (ch.overflow or ch.underflow) and i + 1 < self.num_channels:
+                cascade_trigger[i + 1] = True
 
             # Input capture
             if capture_in and i < len(capture_in):
