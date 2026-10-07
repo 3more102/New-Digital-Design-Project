@@ -1,40 +1,33 @@
 # =============================================================================
-# Yosys Synthesis Script - Timer/Counter Subsystem
+# Yosys synthesis script - Timer/Counter Subsystem
+# Run from the synth/ directory: yosys -s synth_yosys.ys
 # =============================================================================
-# Usage: yosys -s synth/synth_yosys.ys
 
-# Read design files
-read_verilog -DNUM_CHANNELS=4 -DWIDTH=32 rtl/prescaler.sv
-read_verilog -DNUM_CHANNELS=4 -DWIDTH=32 rtl/counter.sv
-read_verilog -DNUM_CHANNELS=4 -DWIDTH=32 rtl/compare_unit.sv
-read_verilog -DNUM_CHANNELS=4 -DWIDTH=32 rtl/pwm_generator.sv
-read_verilog -DNUM_CHANNELS=4 -DWIDTH=32 rtl/input_capture.sv
-read_verilog -DNUM_CHANNELS=4 -DWIDTH=32 rtl/cascade_unit.sv
-read_verilog -DNUM_CHANNELS=4 -DWIDTH=32 rtl/register_block.sv
-read_verilog -DNUM_CHANNELS=4 -DWIDTH=32 rtl/interrupt_controller.sv
-read_verilog -DNUM_CHANNELS=4 -DWIDTH=32 rtl/timer_top.sv
+# SystemVerilog RTL
+read_verilog -sv ../rtl/prescaler.sv
+read_verilog -sv ../rtl/counter.sv
+read_verilog -sv ../rtl/compare_unit.sv
+read_verilog -sv ../rtl/pwm_generator.sv
+read_verilog -sv ../rtl/input_capture.sv
+read_verilog -sv ../rtl/cascade_unit.sv
+read_verilog -sv ../rtl/register_block.sv
+read_verilog -sv ../rtl/interrupt_controller.sv
+read_verilog -sv ../rtl/timer_top.sv
 
-# Elaborate
-hierarchy -top timer_top
+hierarchy -check -top timer_top
 
-# Process design
 proc
 opt
 fsm
 opt
 memory
 opt
-
-# Technology mapping
 techmap
 opt
-
-# Clean up
 clean
 
-# Print statistics
+check
 stat
 
-# Generate netlist
-write_verilog synth/output/timer_top_netlist.v
-write_blif synth/output/timer_top.blif
+write_verilog output/timer_top_netlist.v
+write_blif output/timer_top.blif
