@@ -1,68 +1,111 @@
 // =============================================================================
 // Module: input_capture
-// Description: Captures counter value on external signal edge transitions.
-//              Includes optional debounce filtering.
+// Description: Synchronizes an external capture input, optionally debounces it,
+//              detects configured edges, and snapshots the current counter.
 // =============================================================================
 module input_capture #(
-    parameter int unsigned WIDTH     = 32,
-    parameter int unsigned DEBOUNCE  = 4   // Debounce filter depth (0 = disabled)
+    parameter int unsigned WIDTH    = 32,
+    parameter int unsigned DEBOUNCE = 4   // consecutive samples; 0 = disabled
 ) (
     input  logic clk,
     input  logic rst_n,
     input  logic enable,
-    input  logic capture_in,        // External capture input
-    input  logic [WIDTH-1:0] count, // Counter value to capture
-    input  logic [1:0] edge_sel,    // 00: rising, 01: falling, 10: both, 11: disabled
-    output logic [WIDTH-1:0] captured_val,  // Captured counter value
-    output logic capture_event     // Capture event pulse
+    input  logic capture_in,
+    input  logic [WIDTH-1:0] count,
+    input  logic [1:0] edge_sel,          // 00 rising, 01 falling, 10 both, 11 off
+    output logic [WIDTH-1:0] captured_val,
+    output logic capture_event
 );
 
-    // Debounce filter (shift register)
-    localparam int unsigned DEPTH = (DEBOUNCE > 0) ? DEBOUNCE : 1;
-    logic [DEPTH-1:0] debounce_reg;
-    logic debounced;
+    // Two-flop synchronizer for the asynchronous external input.
+    logic capture_meta;
+    logic capture_sync;
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            debounce_reg <= '0;
-        end else if (enable) begin
-            debounce_reg <= {debounce_reg[DEPTH-2:0], capture_in};
+            capture_meta <= 1'b0;
+            capture_sync <= 1'b0;
+        end else begin
+            capture_meta <= capture_in;
+            capture_sync <= capture_meta;
         end
     end
 
-    assign debounced = (DEBOUNCE == 0) ? capture_in :
-                       &debounce_reg;  // All bits must be 1
+    logic filtered_capture;
 
-    // Edge detection
-    logic debounced_d;
-    logic rising_edge_detect, falling_edge_detect;
+    generate
+        if (DEBOUNCE == 0) begin : gen_no_debounce
+            always_comb filtered_capture = capture_sync;
+        end else if (DEBOUNCE == 1) begin : gen_single_sample_debounce
+            logic stable_q;
+
+            always_ff @(posedge clk or negedge rst_n) begin
+                if (!rst_n)
+                    stable_q <= 1'b0;
+                else if (enable)
+                    stable_q <= capture_sync;
+            end
+
+            always_comb filtered_capture = stable_q;
+        end else begin : gen_debounce
+            logic [DEBOUNCE-1:0] sample_history;
+            logic stable_q;
+
+            always_ff @(posedge clk or negedge rst_n) begin
+                if (!rst_n) begin
+                    sample_history <= '0;
+                    stable_q       <= 1'b0;
+                end else if (enable) begin
+                    sample_history <= {sample_history[DEBOUNCE-2:0], capture_sync};
+
+                    // Change the stable output only after DEBOUNCE identical
+                    // samples. Intermediate patterns preserve the old level.
+                    if (&sample_history)
+                        stable_q <= 1'b1;
+                    else if (~|sample_history)
+                        stable_q <= 1'b0;
+                end
+            end
+
+            always_comb filtered_capture = stable_q;
+        end
+    endgenerate
+
+    logic filtered_d;
+    logic rising_edge_detect;
+    logic falling_edge_detect;
+    logic capture_trigger;
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n)
-            debounced_d <= 1'b0;
+            filtered_d <= 1'b0;
         else if (enable)
-            debounced_d <= debounced;
+            filtered_d <= filtered_capture;
     end
 
-    assign rising_edge_detect  = debounced & ~debounced_d;
-    assign falling_edge_detect = ~debounced & debounced_d;
+    assign rising_edge_detect  =  filtered_capture & ~filtered_d;
+    assign falling_edge_detect = ~filtered_capture &  filtered_d;
 
-    logic capture_trigger;
-    assign capture_trigger = (edge_sel == 2'b00) ? rising_edge_detect :
-                             (edge_sel == 2'b01) ? falling_edge_detect :
-                             (edge_sel == 2'b10) ? (rising_edge_detect | falling_edge_detect) :
-                             1'b0;
+    always_comb begin
+        case (edge_sel)
+            2'b00: capture_trigger = rising_edge_detect;
+            2'b01: capture_trigger = falling_edge_detect;
+            2'b10: capture_trigger = rising_edge_detect | falling_edge_detect;
+            default: capture_trigger = 1'b0;
+        endcase
+    end
 
-    // Capture register
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            captured_val <= '0;
+            captured_val  <= '0;
             capture_event <= 1'b0;
-        end else if (enable && capture_trigger) begin
-            captured_val <= count;
-            capture_event <= 1'b1;
         end else begin
             capture_event <= 1'b0;
+
+            if (enable && capture_trigger) begin
+                captured_val  <= count;
+                capture_event <= 1'b1;
+            end
         end
     end
 
