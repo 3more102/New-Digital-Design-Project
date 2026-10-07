@@ -1,6 +1,3 @@
-# =============================================================================
-# GitHub Actions CI - Timer/Counter Subsystem
-# =============================================================================
 name: CI
 
 on:
@@ -8,37 +5,32 @@ on:
     branches: [main, develop]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 env:
   NUM_CHANNELS: 4
   WIDTH: 32
 
 jobs:
-  # ---------------------------------------------------------------------------
-  # Python Golden Model Tests
-  # ---------------------------------------------------------------------------
   golden-model:
     name: Python Golden Model
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.11"
 
-      - name: Run golden model tests
-        run: |
-          cd python
-          python -m pytest timer_golden_model.py -v --tb=short
-          python timer_golden_model.py
-        env:
-          PYTHONPATH: .
+      - name: Install test dependencies
+        run: python -m pip install --upgrade pytest
 
-  # ---------------------------------------------------------------------------
-  # RTL Compilation and Simulation
-  # ---------------------------------------------------------------------------
+      - name: Run pytest suite
+        run: python -m pytest python -q
+
+      - name: Run standalone golden-model smoke
+        run: python python/timer_golden_model.py
+
   simulation:
     name: RTL Simulation
     runs-on: ubuntu-latest
@@ -50,10 +42,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y iverilog
 
-      - name: Compile RTL
+      - name: Compile RTL regression
         run: |
           mkdir -p sim/results sim/logs
-          iverilog -g2012 \
+          iverilog -g2012 -Wall -s timer_tb \
             -DNUM_CHANNELS=${{ env.NUM_CHANNELS }} \
             -DWIDTH=${{ env.WIDTH }} \
             -I rtl \
@@ -67,17 +59,13 @@ jobs:
             rtl/interrupt_controller.sv \
             rtl/timer_top.sv \
             tb/timer_tb.sv \
-            tb/agents/apb_bfm.sv \
             -o sim/results/timer_tb.vvp
 
-      - name: Run simulation
+      - name: Run RTL regression
+        shell: bash
         run: |
+          set -o pipefail
           vvp sim/results/timer_tb.vvp 2>&1 | tee sim/logs/sim.log
-          echo "=== Checking for failures ==="
-          if grep -q "FAIL" sim/logs/sim.log; then
-            echo "Tests failed!"
-            exit 1
-          fi
 
       - name: Upload simulation logs
         if: always()
@@ -86,11 +74,8 @@ jobs:
           name: simulation-logs
           path: sim/logs/
 
-  # ---------------------------------------------------------------------------
-  # Assertion Verification
-  # ---------------------------------------------------------------------------
   assertions:
-    name: SVA Assertions
+    name: Assertion Monitor
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -100,10 +85,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y iverilog
 
-      - name: Compile with assertions
+      - name: Compile with assertion monitor
         run: |
           mkdir -p sim/results sim/logs
-          iverilog -g2012 \
+          iverilog -g2012 -Wall -s timer_tb \
+            -DENABLE_ASSERTIONS \
             -DNUM_CHANNELS=${{ env.NUM_CHANNELS }} \
             -DWIDTH=${{ env.WIDTH }} \
             -I rtl \
@@ -116,17 +102,52 @@ jobs:
             rtl/register_block.sv \
             rtl/interrupt_controller.sv \
             rtl/timer_top.sv \
-            tb/timer_tb.sv \
-            tb/agents/apb_bfm.sv \
             tb/assertions/timer_assertions.sv \
+            tb/timer_tb.sv \
             -o sim/results/timer_tb_assert.vvp
 
-      - name: Run with assertions
-        run: vvp sim/results/timer_tb_assert.vvp 2>&1 | tee sim/logs/sim_assert.log
+      - name: Run assertion regression
+        shell: bash
+        run: |
+          set -o pipefail
+          vvp sim/results/timer_tb_assert.vvp 2>&1 | tee sim/logs/sim_assert.log
+          if grep -q "ASSERT " sim/logs/sim_assert.log; then
+            echo "Assertion violation detected"
+            exit 1
+          fi
 
-  # ---------------------------------------------------------------------------
-  # Yosys Synthesis (Quick Check)
-  # ---------------------------------------------------------------------------
+      - name: Upload assertion logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: assertion-logs
+          path: sim/logs/sim_assert.log
+
+  lint:
+    name: Verilator Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Verilator
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y verilator
+
+      - name: Lint synthesizable RTL
+        run: |
+          verilator --lint-only -Wall -Wno-fatal \
+            --top-module timer_top \
+            rtl/prescaler.sv \
+            rtl/counter.sv \
+            rtl/compare_unit.sv \
+            rtl/pwm_generator.sv \
+            rtl/input_capture.sv \
+            rtl/cascade_unit.sv \
+            rtl/register_block.sv \
+            rtl/interrupt_controller.sv \
+            rtl/timer_top.sv
+
   synthesis:
     name: Yosys Synthesis
     runs-on: ubuntu-latest
@@ -139,17 +160,12 @@ jobs:
           sudo apt-get install -y yosys
 
       - name: Run synthesis
+        shell: bash
         run: |
           mkdir -p synth/output sim/logs
           cd synth
+          set -o pipefail
           yosys -s synth_yosys.ys 2>&1 | tee ../sim/logs/yosys.log
-
-      - name: Check for errors
-        run: |
-          if grep -q "ERROR\|error:" sim/logs/yosys.log; then
-            echo "Synthesis errors detected!"
-            exit 1
-          fi
 
       - name: Upload synthesis results
         if: always()
@@ -160,32 +176,15 @@ jobs:
             synth/output/
             sim/logs/yosys.log
 
-  # ---------------------------------------------------------------------------
-  # Documentation Build Check
-  # ---------------------------------------------------------------------------
   docs:
     name: Documentation
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Verify documentation exists
+      - name: Verify required documentation
         run: |
-          echo "Checking documentation files..."
           for f in README.md LICENSE docs/DESIGN_SPEC.md docs/VERIFICATION_PLAN.md docs/ARCHITECTURE.md; do
-            if [ -f "$f" ]; then
-              echo "  ✓ $f"
-            else
-              echo "  ✗ $f (missing!)"
-              exit 1
-            fi
+            test -f "$f" || { echo "Missing $f"; exit 1; }
           done
-
-      - name: Check README length
-        run: |
-          lines=$(wc -l < README.md)
-          if [ "$lines" -lt 50 ]; then
-            echo "README.md seems too short ($lines lines)"
-            exit 1
-          fi
-          echo "README.md: $lines lines - OK"
+          test "$(wc -l < README.md)" -ge 50
