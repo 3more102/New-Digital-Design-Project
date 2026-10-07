@@ -18,7 +18,7 @@ module timer_assertions #(
     input logic                   pready,
 
     input logic [NUM_CHANNELS-1:0]            channel_enable,
-    input logic [NUM_CHANNELS-1:0][WIDTH-1:0] channel_count,
+    input logic [(NUM_CHANNELS*WIDTH)-1:0]  channel_count,
     input logic [NUM_CHANNELS-1:0]            channel_overflow,
     input logic [NUM_CHANNELS-1:0]            channel_underflow,
     input logic [NUM_CHANNELS-1:0]            channel_int_pending,
@@ -30,7 +30,7 @@ module timer_assertions #(
     logic setup_write;
     logic [WIDTH-1:0] setup_wdata;
 
-    logic [NUM_CHANNELS-1:0][WIDTH-1:0] prev_count;
+    logic [(NUM_CHANNELS*WIDTH)-1:0] prev_count;
     logic [NUM_CHANNELS-1:0] prev_enable;
     logic prev_valid;
 
@@ -78,11 +78,11 @@ module timer_assertions #(
             if (prev_valid) begin
                 for (int i = 0; i < NUM_CHANNELS; i++) begin
                     if (channel_overflow[i] &&
-                        (prev_count[i] !== {WIDTH{1'b1}}))
+                        (prev_count[(i*WIDTH) +: WIDTH] !== {WIDTH{1'b1}}))
                         $error("ASSERT CH%0d: overflow without prior max count", i);
 
                     if (channel_underflow[i] &&
-                        (prev_count[i] !== {WIDTH{1'b0}}))
+                        (prev_count[(i*WIDTH) +: WIDTH] !== {WIDTH{1'b0}}))
                         $error("ASSERT CH%0d: underflow without prior zero count", i);
                 end
             end
