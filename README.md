@@ -14,7 +14,7 @@ A parameterized, synthesizable multi-channel timer/counter IP core designed for 
 - **Channel cascading** for multi-stage timers
 - **APB slave interface** for register access
 - **Interrupt controller** with per-channel enable/mask
-- **SystemVerilog assertions** for design verification
+- **Protocol/behavior invariant monitor** exercised in CI
 - **Yosys/OpenROAD synthesis** support
 
 ## Architecture
@@ -72,7 +72,7 @@ make test_python   # Python golden model only (works without iverilog)
 
 ```bash
 make sim           # RTL simulation only
-make sim_assert    # Simulation with SVA assertions
+make sim_assert    # Simulation with assertion/invariant monitor
 make test_python   # Python golden model only
 make yosys         # Yosys synthesis
 make help          # Show all targets
@@ -96,19 +96,19 @@ make sim NUM_CHANNELS=8 WIDTH=64
 
 | Offset | Name | R/W | Description |
 |--------|------|-----|-------------|
-| `0x00` | CTRL | R/W | Channel enable |
-| `0x04` | STATUS | R | Match/overflow status |
-| `0x08` | CNT | R/W | Counter value |
-| `0x0C` | RELOAD | R/W | Reload value |
+| `0x00` | CTRL | R/W | Count mode: 0=stop, 1=up, 2=down, 3=up/down |
+| `0x04` | STATUS | R | Sticky event bits: match/overflow/underflow/capture |
+| `0x08` | CNT | R/W | Current count / software preload |
+| `0x0C` | RELOAD | R/W | Value loaded on overflow/underflow |
 | `0x10` | COMPARE | R/W | Compare match value |
 | `0x14` | PWM_CMP | R/W | PWM duty compare |
 | `0x18` | CAPTURE | R | Captured counter value |
 | `0x1C` | EDGE | R/W | Edge select/debounce config |
-| `0x20` | INT_EN | R/W | Interrupt enable |
+| `0x20` | INT_EN | R/W | bit0 interrupt enable, bit1 cascade enable |
 | `0x24` | INT_CLR | W | Clear interrupt (W1C) |
 | `0x400` | GLOBAL_CTRL | R/W | Global enable + prescaler |
 | `0x404` | GLOBAL_IRQ | R | Global interrupt status |
-| `0x408` | VERSION | R | IP version (0x00010000) |
+| `0x408` | VERSION | R | IP version (0x00010001) |
 
 Per-channel base: `channel_id × 0x40`
 
@@ -151,10 +151,10 @@ Per-channel base: `channel_id × 0x40`
 
 The project includes a comprehensive verification environment:
 
-- **Self-checking testbench** with 15+ directed tests
-- **SystemVerilog assertions** for protocol and behavioral checks
-- **Python golden model** for reference comparison
-- **Corner case tests** (max values, overflow, cascade timing)
+- **Self-checking RTL integration regression** with 22 semantic checks
+- **Assertion/invariant monitor** for APB sequencing, terminal-count events, and IRQ consistency
+- **Python golden model** with 10 executable pytest tests
+- **Verilator lint** and **Yosys synthesis** gates in CI
 
 See [docs/VERIFICATION_PLAN.md](docs/VERIFICATION_PLAN.md) for the full verification plan.
 
@@ -178,50 +178,20 @@ make openroad
 
 See [docs/PERFORMANCE_ANALYSIS.md](docs/PERFORMANCE_ANALYSIS.md) for area/timing analysis guidelines.
 
-## Simulation Results
+## Verified CI Baseline
 
-> **Note:** All results below are from actual tool runs in this environment.
-> No fabricated results are presented.
+GitHub Actions run **37690557357** completed successfully on the repaired RTL baseline.
 
-### Tool Availability
+| Gate | Result |
+|------|--------|
+| Python golden-model pytest | PASS |
+| RTL simulation (Icarus Verilog) | PASS — 22 checks, 0 errors |
+| Assertion/invariant monitor | PASS |
+| Verilator lint | PASS |
+| Yosys synthesis | PASS |
+| Documentation check | PASS |
 
-| Tool | Available | Status |
-|------|-----------|--------|
-| Python 3.12 | Yes | Golden model tested |
-| Icarus Verilog | No | RTL sim needs iverilog (see CI for automated runs) |
-| Yosys | No | Synthesis needs yosys (see CI for automated runs) |
-| ModelSim | Yes (limited) | License restricted |
-
-### Test Results (Python Golden Model - MEASURED)
-
-| Test | Status | Notes |
-|------|--------|-------|
-| Up-count mode | ✅ PASS | count = 10 after 10 ticks |
-| Overflow & reload | ✅ PASS | Reloads to 5, then counts to 9 |
-| Down-count mode | ✅ PASS | Count decrements correctly |
-| PWM output | ✅ PASS | PWM out = 1 when count < compare |
-| Cascade chaining | ✅ PASS | ch0=15, ch1=15 (cascade working) |
-| Compare match interrupt | ✅ PASS | IRQ fires at count >= compare |
-| Up/down mode | ✅ PASS | count = 250 (center-aligned) |
-| Input capture | ✅ PASS | Captured value = 42 |
-
-### RTL Simulation (EXPECTED - run `make sim` with iverilog)
-
-| Test | Expected Status |
-|------|------------------|
-| Version register | PASS |
-| Up-count mode | PASS |
-| Overflow & reload | PASS |
-| Down-count mode | PASS |
-| Compare match | PASS |
-| Interrupt generation | PASS |
-| PWM output | PASS |
-| Channel cascade | PASS |
-| Up/down mode | PASS |
-| Input capture | PASS |
-| Counter disabled | PASS |
-| Multi-channel independent | PASS |
-| Prescaler | PASS |
+The verified RTL regression covers mode readback, CNT preload, RELOAD independence, up/down/up-down operation, overflow reload, sticky status/W1C, compare IRQ, cascade-only counting, input capture, PWM level behavior, and prescaler division.
 
 ## License
 
