@@ -1,6 +1,8 @@
 // =============================================================================
 // Module: register_block
 // Description: APB3-compatible register interface for the timer subsystem.
+//              Multi-channel data buses are flattened for broad synthesis-tool
+//              compatibility; channel i occupies [i*W +: W].
 // =============================================================================
 //
 // Per-channel register map (base = channel_id * 0x40):
@@ -28,7 +30,6 @@ module register_block #(
     input  logic clk,
     input  logic rst_n,
 
-    // APB slave interface
     input  logic [APB_ADDR_W-1:0] paddr,
     input  logic                  psel,
     input  logic                  penable,
@@ -38,54 +39,49 @@ module register_block #(
     output logic                  pready,
     output logic                  pslverr,
 
-    // Per-channel configuration
-    output logic [NUM_CHANNELS-1:0]             channel_enable,
-    output logic [NUM_CHANNELS-1:0][1:0]        channel_mode,
-    output logic [NUM_CHANNELS-1:0][WIDTH-1:0]  channel_reload,
-    output logic [NUM_CHANNELS-1:0][WIDTH-1:0]  channel_compare,
-    output logic [NUM_CHANNELS-1:0][WIDTH-1:0]  channel_pwm_cmp,
-    output logic [NUM_CHANNELS-1:0][1:0]        channel_edge_sel,
-    output logic [NUM_CHANNELS-1:0]             channel_cascade_en,
+    output logic [NUM_CHANNELS-1:0]           channel_enable,
+    output logic [(NUM_CHANNELS*2)-1:0]       channel_mode,
+    output logic [(NUM_CHANNELS*WIDTH)-1:0]   channel_reload,
+    output logic [(NUM_CHANNELS*WIDTH)-1:0]   channel_compare,
+    output logic [(NUM_CHANNELS*WIDTH)-1:0]   channel_pwm_cmp,
+    output logic [(NUM_CHANNELS*2)-1:0]       channel_edge_sel,
+    output logic [NUM_CHANNELS-1:0]           channel_cascade_en,
 
-    // Software counter preload
-    output logic [NUM_CHANNELS-1:0]             channel_count_load_strobe,
-    output logic [NUM_CHANNELS-1:0][WIDTH-1:0]  channel_count_load_value,
+    output logic [NUM_CHANNELS-1:0]           channel_count_load_strobe,
+    output logic [(NUM_CHANNELS*WIDTH)-1:0]   channel_count_load_value,
 
-    // Inputs from timer channels
-    input  logic [NUM_CHANNELS-1:0][WIDTH-1:0]  channel_count,
-    input  logic [NUM_CHANNELS-1:0][WIDTH-1:0]  channel_captured,
-    input  logic [NUM_CHANNELS-1:0]             channel_overflow,
-    input  logic [NUM_CHANNELS-1:0]             channel_underflow,
-    input  logic [NUM_CHANNELS-1:0]             channel_match,
-    input  logic [NUM_CHANNELS-1:0]             channel_capture_event,
+    input  logic [(NUM_CHANNELS*WIDTH)-1:0]   channel_count,
+    input  logic [(NUM_CHANNELS*WIDTH)-1:0]   channel_captured,
+    input  logic [NUM_CHANNELS-1:0]           channel_overflow,
+    input  logic [NUM_CHANNELS-1:0]           channel_underflow,
+    input  logic [NUM_CHANNELS-1:0]           channel_match,
+    input  logic [NUM_CHANNELS-1:0]           channel_capture_event,
 
-    // Interrupt interface
-    input  logic [NUM_CHANNELS-1:0]             channel_int_pending,
-    output logic [NUM_CHANNELS-1:0]             channel_int_en,
-    output logic [NUM_CHANNELS-1:0]             channel_int_clr,
+    input  logic [NUM_CHANNELS-1:0]           channel_int_pending,
+    output logic [NUM_CHANNELS-1:0]           channel_int_en,
+    output logic [NUM_CHANNELS-1:0]           channel_int_clr,
 
-    // Global configuration
-    output logic                                global_enable,
-    output logic [15:0]                         prescaler_val
+    output logic                              global_enable,
+    output logic [15:0]                       prescaler_val
 );
 
     localparam logic [APB_ADDR_W-1:0] CH_STRIDE    = 12'h040;
     localparam logic [APB_ADDR_W-1:0] GLOBAL_BASE  = 12'h400;
     localparam logic [APB_ADDR_W-1:0] VERSION_ADDR = 12'h408;
-    localparam logic [31:0] IP_VERSION = 32'h0001_0001; // v1.0.1
+    localparam logic [31:0] IP_VERSION = 32'h0001_0001;
 
-    logic [NUM_CHANNELS-1:0][1:0]       ctrl_reg;
-    logic [NUM_CHANNELS-1:0][WIDTH-1:0] reload_reg;
-    logic [NUM_CHANNELS-1:0][WIDTH-1:0] compare_reg;
-    logic [NUM_CHANNELS-1:0][WIDTH-1:0] pwm_cmp_reg;
-    logic [NUM_CHANNELS-1:0][1:0]       edge_reg;
-    logic [NUM_CHANNELS-1:0]            cascade_reg;
-    logic [NUM_CHANNELS-1:0]            int_en_reg;
-    logic [NUM_CHANNELS-1:0]            int_clr_reg;
+    logic [(NUM_CHANNELS*2)-1:0]       ctrl_reg;
+    logic [(NUM_CHANNELS*WIDTH)-1:0]   reload_reg;
+    logic [(NUM_CHANNELS*WIDTH)-1:0]   compare_reg;
+    logic [(NUM_CHANNELS*WIDTH)-1:0]   pwm_cmp_reg;
+    logic [(NUM_CHANNELS*2)-1:0]       edge_reg;
+    logic [NUM_CHANNELS-1:0]           cascade_reg;
+    logic [NUM_CHANNELS-1:0]           int_en_reg;
+    logic [NUM_CHANNELS-1:0]           int_clr_reg;
 
-    logic [NUM_CHANNELS-1:0][WIDTH-1:0] count_load_value_reg;
-    logic [NUM_CHANNELS-1:0]            count_load_strobe_reg;
-    logic [NUM_CHANNELS-1:0][3:0]       status_reg;
+    logic [(NUM_CHANNELS*WIDTH)-1:0]   count_load_value_reg;
+    logic [NUM_CHANNELS-1:0]           count_load_strobe_reg;
+    logic [(NUM_CHANNELS*4)-1:0]       status_reg;
 
     logic [15:0] prescaler_reg;
     logic        global_ctrl_reg;
@@ -95,9 +91,6 @@ module register_block #(
     logic version_sel;
     logic [5:0] reg_offset;
 
-    // -------------------------------------------------------------------------
-    // Address decode
-    // -------------------------------------------------------------------------
     always_comb begin
         channel_sel = '0;
         global_sel  = 1'b0;
@@ -119,75 +112,59 @@ module register_block #(
             version_sel = 1'b1;
     end
 
-    // -------------------------------------------------------------------------
-    // Register writes and sticky status
-    // -------------------------------------------------------------------------
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            ctrl_reg               <= '0;
-            reload_reg             <= '0;
-            compare_reg            <= '0;
-            pwm_cmp_reg            <= '0;
-            edge_reg               <= '0;
-            cascade_reg            <= '0;
-            int_en_reg             <= '0;
-            int_clr_reg            <= '0;
-            count_load_value_reg   <= '0;
-            count_load_strobe_reg  <= '0;
-            status_reg             <= '0;
-            prescaler_reg          <= '0;
-            global_ctrl_reg        <= 1'b0;
+            ctrl_reg              <= '0;
+            reload_reg            <= '0;
+            compare_reg           <= '0;
+            pwm_cmp_reg           <= '0;
+            edge_reg              <= '0;
+            cascade_reg           <= '0;
+            int_en_reg            <= '0;
+            int_clr_reg           <= '0;
+            count_load_value_reg  <= '0;
+            count_load_strobe_reg <= '0;
+            status_reg            <= '0;
+            prescaler_reg         <= '0;
+            global_ctrl_reg       <= 1'b0;
         end else begin
             int_clr_reg           <= '0;
             count_load_strobe_reg <= '0;
 
-            // Sticky event status. New events survive a simultaneous clear.
             for (int i = 0; i < NUM_CHANNELS; i++) begin
-                status_reg[i] <= status_reg[i] |
-                                 {channel_capture_event[i],
-                                  channel_underflow[i],
-                                  channel_overflow[i],
-                                  channel_match[i]};
+                status_reg[(i*4) +: 4] <=
+                    status_reg[(i*4) +: 4] |
+                    {channel_capture_event[i],
+                     channel_underflow[i],
+                     channel_overflow[i],
+                     channel_match[i]};
             end
 
             if (psel && penable && pwrite) begin
                 for (int i = 0; i < NUM_CHANNELS; i++) begin
                     if (channel_sel[i]) begin
                         case (reg_offset)
-                            6'h00: begin
-                                ctrl_reg[i] <= pwdata[1:0];
-                            end
+                            6'h00: ctrl_reg[(i*2) +: 2] <= pwdata[1:0];
 
                             6'h08: begin
-                                count_load_value_reg[i]  <= pwdata;
+                                count_load_value_reg[(i*WIDTH) +: WIDTH] <= pwdata;
                                 count_load_strobe_reg[i] <= 1'b1;
                             end
 
-                            6'h0C: begin
-                                reload_reg[i] <= pwdata;
-                            end
-
-                            6'h10: begin
-                                compare_reg[i] <= pwdata;
-                            end
-
-                            6'h14: begin
-                                pwm_cmp_reg[i] <= pwdata;
-                            end
-
-                            6'h1C: begin
-                                edge_reg[i] <= pwdata[1:0];
-                            end
+                            6'h0C: reload_reg[(i*WIDTH) +: WIDTH] <= pwdata;
+                            6'h10: compare_reg[(i*WIDTH) +: WIDTH] <= pwdata;
+                            6'h14: pwm_cmp_reg[(i*WIDTH) +: WIDTH] <= pwdata;
+                            6'h1C: edge_reg[(i*2) +: 2] <= pwdata[1:0];
 
                             6'h20: begin
-                                int_en_reg[i]   <= pwdata[0];
-                                cascade_reg[i]  <= pwdata[1];
+                                int_en_reg[i]  <= pwdata[0];
+                                cascade_reg[i] <= pwdata[1];
                             end
 
                             6'h24: begin
                                 if (pwdata[0]) begin
                                     int_clr_reg[i] <= 1'b1;
-                                    status_reg[i] <=
+                                    status_reg[(i*4) +: 4] <=
                                         {channel_capture_event[i],
                                          channel_underflow[i],
                                          channel_overflow[i],
@@ -195,9 +172,7 @@ module register_block #(
                                 end
                             end
 
-                            default: begin
-                                // Read-only or reserved location: no write effect.
-                            end
+                            default: begin end
                         endcase
                     end
                 end
@@ -210,9 +185,6 @@ module register_block #(
         end
     end
 
-    // -------------------------------------------------------------------------
-    // APB read mux
-    // -------------------------------------------------------------------------
     always_comb begin
         prdata  = '0;
         pready  = 1'b1;
@@ -224,23 +196,23 @@ module register_block #(
                     case (reg_offset)
                         6'h00: begin
                             prdata = '0;
-                            prdata[1:0] = ctrl_reg[i];
+                            prdata[1:0] = ctrl_reg[(i*2) +: 2];
                         end
 
                         6'h04: begin
                             prdata = '0;
-                            prdata[3:0] = status_reg[i];
+                            prdata[3:0] = status_reg[(i*4) +: 4];
                         end
 
-                        6'h08: prdata = channel_count[i];
-                        6'h0C: prdata = reload_reg[i];
-                        6'h10: prdata = compare_reg[i];
-                        6'h14: prdata = pwm_cmp_reg[i];
-                        6'h18: prdata = channel_captured[i];
+                        6'h08: prdata = channel_count[(i*WIDTH) +: WIDTH];
+                        6'h0C: prdata = reload_reg[(i*WIDTH) +: WIDTH];
+                        6'h10: prdata = compare_reg[(i*WIDTH) +: WIDTH];
+                        6'h14: prdata = pwm_cmp_reg[(i*WIDTH) +: WIDTH];
+                        6'h18: prdata = channel_captured[(i*WIDTH) +: WIDTH];
 
                         6'h1C: begin
                             prdata = '0;
-                            prdata[1:0] = edge_reg[i];
+                            prdata[1:0] = edge_reg[(i*2) +: 2];
                         end
 
                         6'h20: begin
@@ -250,7 +222,6 @@ module register_block #(
                         end
 
                         6'h24: prdata = '0;
-
                         default: prdata = '0;
                     endcase
                 end
@@ -278,13 +249,10 @@ module register_block #(
         end
     end
 
-    // -------------------------------------------------------------------------
-    // Outputs
-    // -------------------------------------------------------------------------
     always_comb begin
         channel_enable = '0;
         for (int i = 0; i < NUM_CHANNELS; i++) begin
-            channel_enable[i] = |ctrl_reg[i];
+            channel_enable[i] = |ctrl_reg[(i*2) +: 2];
         end
     end
 
