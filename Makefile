@@ -54,7 +54,7 @@ $(SIM_DIR)/results $(SIM_DIR)/logs $(SYNTH_DIR)/output:
 
 sim: $(SIM_DIR)/results $(SIM_DIR)/logs
 	@echo "=== Compiling RTL + Testbench ==="
-	$(IVERILOG) -g2012 \
+	$(IVERILOG) -g2012 -s timer_tb \
 		-DNUM_CHANNELS=$(NUM_CHANNELS) \
 		-DWIDTH=$(WIDTH) \
 		-I $(RTL_DIR) \
@@ -66,11 +66,12 @@ sim: $(SIM_DIR)/results $(SIM_DIR)/logs
 
 sim_assert: $(SIM_DIR)/results $(SIM_DIR)/logs
 	@echo "=== Compiling with Assertions ==="
-	$(IVERILOG) -g2012 \
+	$(IVERILOG) -g2012 -s timer_tb \
+		-DENABLE_ASSERTIONS \
 		-DNUM_CHANNELS=$(NUM_CHANNELS) \
 		-DWIDTH=$(WIDTH) \
 		-I $(RTL_DIR) \
-		$(RTL_SRCS) $(TB_SRCS) $(ASSERT_SRCS) \
+		$(RTL_SRCS) $(ASSERT_SRCS) $(TB_SRCS) \
 		-o $(SIM_DIR)/results/timer_tb_assert.vvp 2>&1 | tee $(SIM_DIR)/logs/compile_assert.log
 	@echo "=== Running with Assertions ==="
 	$(VVP) $(SIM_DIR)/results/timer_tb_assert.vvp 2>&1 | tee $(SIM_DIR)/logs/sim_assert.log
