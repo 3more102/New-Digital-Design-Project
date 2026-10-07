@@ -1,7 +1,7 @@
 # Verification Plan - Multi-Channel Timer/Counter Subsystem
 
-**Version:** 1.0.0
-**Date:** August 2026
+**Version:** 1.0.1
+**Date:** October 2026
 
 ---
 
@@ -34,9 +34,9 @@
 | Method | Tool | Purpose |
 |--------|------|---------|
 | Directed tests | Icarus Verilog | Specific scenario validation |
-| Assertions | SVA (concurrent) | Protocol/behavioral checking |
+| Invariant monitor | SystemVerilog procedural checks | APB/behavioral checking under Icarus |
 | Golden model | Python | Reference comparison |
-| Coverage | Manual + SVA cover | Completeness tracking |
+| CI gates | Verilator + Yosys | Lint and synthesis portability |
 
 ## 3. Test Cases
 
@@ -131,9 +131,9 @@
 | TC-083 | Write-only register | Read INT_CLR | Returns 0 |
 | TC-084 | Address decode | Access each register | Correct decode |
 
-## 4. Assertions
+## 4. Invariant Checks
 
-### 4.1 Protocol Assertions
+### 4.1 Protocol Checks
 
 | ID | Assertion | Severity |
 |----|-----------|----------|
@@ -142,7 +142,7 @@
 | AS-003 | Write data stable in access phase | Error |
 | AS-004 | No penable without psel | Error |
 
-### 4.2 Behavioral Assertions
+### 4.2 Behavioral Checks
 
 | ID | Assertion | Severity |
 |----|-----------|----------|
@@ -151,14 +151,9 @@
 | AS-012 | Counter frozen when disabled | Error |
 | AS-013 | Match implies enabled | Error |
 
-### 4.3 Cover Properties
+### 4.3 Current Verified Baseline
 
-| ID | Property | Purpose |
-|----|----------|---------|
-| CV-001 | Channel count > 0 | Counter activity |
-| CV-002 | Channel overflow | Overflow event |
-| CV-003 | Channel match | Match event |
-| CV-004 | IRQ asserted | Interrupt activity |
+GitHub Actions run **37690557357** passed all six CI jobs. The RTL integration regression completed **22 checks with 0 errors**. The Python reference model has **10 pytest tests**. Verilator lint and Yosys synthesis both pass.
 
 ## 5. Coverage Goals
 
@@ -171,7 +166,7 @@
 | Interrupt sources | {overflow, underflow, match, capture} | 100% |
 | Cascade states | {enabled, disabled} | 100% |
 
-### 5.2 Code Coverage (Expected)
+### 5.2 Code Coverage Targets (not yet measured)
 
 | Metric | Target |
 |--------|--------|
@@ -199,7 +194,7 @@
 - Testbench reads back register values after writes
 - Compares against expected values using `check()` task
 - Counts pass/fail and reports summary
-- Assertions run concurrently (passive checking)
+- The invariant monitor runs concurrently as a passive checker
 
 ## 7. Regression
 
@@ -208,4 +203,4 @@ Run full regression with:
 make test_all
 ```
 
-Expected: All tests pass, no assertion violations.
+Required for merge: Python tests, RTL regression, invariant monitor, Verilator lint, Yosys synthesis, and documentation checks all pass.
